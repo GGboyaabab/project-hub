@@ -1,0 +1,30 @@
+{
+  "name": "project-hub",
+  "private": true,
+  "version": "1.5.0",
+  "description": "Windows 本地项目中台",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "test": "node --test tests/core.test.mjs",
+    "test:desktop": "npm run build && electron tests/desktop.mjs && electron tests/desktop.mjs --organization && electron tests/desktop.mjs --knowledge",
+    "dev": "electron .",
+    "build": "tsc -b && vite build",
+    "start": "electron . --production",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^6.1.0",
+    "electron": "^44.0.0",
+    "electron-builder": "^26.0.12",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.2"
+  }
+}

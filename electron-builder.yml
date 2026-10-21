@@ -1,0 +1,16 @@
+appId: local.projecthub.desktop
+productName: 项目中台
+directories:
+  output: release
+files:
+  - dist/**
+  - electron/**
+  - assets/**
+  - package.json
+asar: true
+win:
+  target: portable
+  icon: assets/icon.ico
+  signExecutable: false
+portable:
+  artifactName: project-hub-${version}.${ext}

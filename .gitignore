@@ -1,0 +1,19 @@
+node_modules/
+dist/
+release/
+*.tsbuildinfo
+test-results/
+
+# Local knowledge, generated assets and machine-specific helpers
+knowledge-imports/
+assets/backup-original/
+scripts/node-shim/
+scripts/logo-preview-*.png
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+model-api.json
+knowledge.json
+*.log
