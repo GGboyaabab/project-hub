@@ -93,6 +93,19 @@ export default function App() {
     setRefreshing(false)
   }, [applyState])
 
+  const chooseRoot = useCallback(async () => {
+    if (knowledgeDirty || settingsDirty) {
+      setNotice({ type: 'error', text: '请先保存或取消当前编辑，再切换工作区' })
+      return
+    }
+    try {
+      const next = await hub.chooseRoot()
+      if (!next || next.root === state?.root) return
+      setState(next); setFilter({ kind: 'all' }); setSearch(''); setTypeFilter('all'); setSelectedPath(null)
+      setNotice({ type: 'success', text: '工作区已切换' })
+    } catch (error) { setNotice({ type: 'error', text: errorMessage(error) }) }
+  }, [knowledgeDirty, settingsDirty, state?.root])
+
   const updateProject = useCallback((projectPath: string, patch: ProjectPatch) =>
     applyState(() => hub.updateProject(projectPath, patch), '项目配置已保存'), [applyState])
 
@@ -215,6 +228,7 @@ export default function App() {
         knowledgeCount={state.knowledge.length}
         groupCounts={groupCounts}
         onFilter={changeFilter}
+        onChooseRoot={chooseRoot}
         onCreate={createGroup}
         onRename={renameGroup}
         onDelete={deleteGroup}

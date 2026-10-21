@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('projectHub', {
   completeBranch: (input) => ipcRenderer.invoke('hub:complete-branch', input),
   getState: () => ipcRenderer.invoke('hub:get-state'),
   refresh: () => ipcRenderer.invoke('hub:refresh'),
+  chooseRoot: () => ipcRenderer.invoke('hub:choose-root'),
   saveKnowledge: (input) => ipcRenderer.invoke('hub:save-knowledge', input),
   deleteKnowledge: (id) => ipcRenderer.invoke('hub:delete-knowledge', id),
   chooseKnowledgeFile: () => ipcRenderer.invoke('hub:choose-knowledge-file'),

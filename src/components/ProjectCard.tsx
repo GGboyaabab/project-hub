@@ -22,7 +22,7 @@ export const ProjectCard = memo(function ProjectCard({ project, groups, selected
       <div className="project-card-header">
         <div className="project-title-row">
           <span className={`status-dot ${project.runtime.status}`} />
-          <h3>{project.name}</h3>
+          <h3 title={project.name}>{project.name}</h3>
         </div>
         <button
           className={`favorite-button ${project.favorite ? 'active' : ''}`}

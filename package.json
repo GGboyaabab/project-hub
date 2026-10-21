@@ -1,7 +1,7 @@
 {
   "name": "project-hub",
   "private": true,
-  "version": "1.5.0",
+  "version": "1.7.0",
   "description": "Windows 本地项目中台",
   "type": "module",
   "main": "electron/main.mjs",

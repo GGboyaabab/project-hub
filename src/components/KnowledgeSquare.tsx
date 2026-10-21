@@ -48,14 +48,6 @@ export function KnowledgeSquare({ state, onState, onDirtyChange, onViewProject }
   useEffect(() => { onDirtyChange(dirty || branchDirty) }, [dirty, branchDirty, onDirtyChange])
   useEffect(() => () => onDirtyChange(false), [onDirtyChange])
   useEffect(() => {
-    if (!pendingBranch || view !== 'reading') return
-    const frame = requestAnimationFrame(() => {
-      document.getElementById(`branch-${pendingBranch}`)?.scrollIntoView({ block: 'start' })
-      setPendingBranch(null)
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [pendingBranch, view, selectedId])
-  useEffect(() => {
     if (!dirty && !branchDirty) return
     const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('beforeunload', prevent)
@@ -237,7 +229,7 @@ export function KnowledgeSquare({ state, onState, onDirtyChange, onViewProject }
           <div className="chip-row">{selected.tags.map(tag => <span className="chip tag" key={tag}>{tag}</span>)}</div>
           {selected.target && <div className="knowledge-source"><span>资料来源</span><code>{selected.target}</code><button className="text-button knowledge-open-source" onClick={() => void openSource()}>{selected.kind === 'link' ? '在浏览器打开' : '在文件夹中定位'}</button></div>}
           {selected.projectPath && <div className="knowledge-source"><span>关联项目</span><code>{linkedProject ? projectLabel(linkedProject) : selected.projectPath}</code>{linkedProject ? <button className="text-button knowledge-open-project" onClick={() => onViewProject(linkedProject)}>查看项目详情</button> : <small>该项目已收起或不在当前扫描结果中，关联信息已保留。</small>}</div>}
-          <KnowledgeBranches key={selected.id} title={selected.title} content={selected.content} branches={selected.branches ?? []} disabled={busy || !!state.knowledgeError} onSave={saveBranches} onDirtyChange={setBranchDirty} />
+          <KnowledgeBranches key={selected.id} title={selected.title} content={selected.content} branches={selected.branches ?? []} disabled={busy || !!state.knowledgeError} focusBranchId={pendingBranch} onBranchFocused={() => setPendingBranch(null)} onSave={saveBranches} onDirtyChange={setBranchDirty} />
         </div>
       </> : <div className="knowledge-detail-empty"><div className="knowledge-empty-symbol">知</div><h2>让知识留得住、找得到</h2><p>选择一条知识查看内容，或创建你的第一条笔记。</p><small>文件条目保存引用路径，原文件仍在原来的位置。</small></div>}
     </main>

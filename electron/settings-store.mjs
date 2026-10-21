@@ -44,7 +44,7 @@ function cleanGroupName(name) {
 export class SettingsStore {
   constructor(filePath) {
     this.filePath = filePath
-    this.state = { groups: [], projects: {}, organizationVersion: 0 }
+    this.state = { groups: [], projects: {}, organizationVersion: 0, managedRoot: null }
     this.pendingWrite = Promise.resolve()
   }
 
@@ -53,6 +53,7 @@ export class SettingsStore {
     try {
       const saved = JSON.parse(await readFile(this.filePath, 'utf8'))
       this.state = {
+        managedRoot: typeof saved.managedRoot === 'string' && path.isAbsolute(saved.managedRoot) ? saved.managedRoot : null,
         organizationVersion: saved.organizationVersion === 1 ? 1 : 0,
         groups: Array.isArray(saved.groups)
           ? saved.groups
@@ -65,7 +66,7 @@ export class SettingsStore {
       }
     } catch (error) {
       if (error?.code !== 'ENOENT') console.warn('设置文件读取失败，将使用默认设置：', error.message)
-      this.state = { groups: [], projects: {}, organizationVersion: 0 }
+      this.state = { groups: [], projects: {}, organizationVersion: 0, managedRoot: null }
     }
   }
 
@@ -90,6 +91,16 @@ export class SettingsStore {
     this.state.projects[projectPath] = project
     await this.persist()
     return this.getProject(projectPath)
+  }
+
+  getManagedRoot() { return this.state.managedRoot }
+
+  async setManagedRoot(root) {
+    if (typeof root !== 'string' || !path.isAbsolute(root)) throw new Error('管理目录必须是绝对路径')
+    const previous = this.state.managedRoot
+    this.state.managedRoot = path.resolve(root)
+    try { await this.persist() }
+    catch (error) { this.state.managedRoot = previous; throw error }
   }
 
   getExpandedPaths() {

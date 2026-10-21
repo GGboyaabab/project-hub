@@ -12,7 +12,8 @@ import { SettingsStore } from './settings-store.mjs'
 
 const electronDirectory = path.dirname(fileURLToPath(import.meta.url))
 const appDirectory = path.resolve(electronDirectory, '..')
-const managedRoot = path.resolve(process.env.PROJECT_HUB_ROOT || 'D:/0-0_ckf')
+let managedRoot = path.resolve(process.env.PROJECT_HUB_ROOT || 'D:/0-0_ckf')
+let choosingRoot = false
 const production = app.isPackaged || process.argv.includes('--production')
 const developmentUrl = 'http://127.0.0.1:5176/'
 
@@ -71,13 +72,15 @@ function stopDevelopmentServer() {
 }
 
 async function refreshCache() {
+  const root = managedRoot
   const expanded = store.getExpandedPaths()
-  projectCache = await scanProjects(managedRoot, expanded)
-  await store.initializeProjects(projectCache)
+  let projects = await scanProjects(root, expanded)
+  await store.initializeProjects(projects)
   if (JSON.stringify(expanded) !== JSON.stringify(store.getExpandedPaths())) {
-    projectCache = await scanProjects(managedRoot, store.getExpandedPaths())
-    await store.initializeProjects(projectCache)
+    projects = await scanProjects(root, store.getExpandedPaths())
+    await store.initializeProjects(projects)
   }
+  if (root === managedRoot) projectCache = projects
 }
 
 function composeState() {
@@ -113,6 +116,24 @@ async function findProject(candidatePath) {
 }
 
 function registerIpc() {
+  ipcMain.handle('hub:choose-root', async () => {
+    if (choosingRoot) throw new Error('正在切换工作区，请稍候')
+    choosingRoot = true
+    try {
+      const result = await dialog.showOpenDialog(mainWindow, { title: '选择项目工作区', defaultPath: managedRoot, properties: ['openDirectory'] })
+      if (result.canceled || !result.filePaths[0]) return null
+      const nextRoot = path.resolve(result.filePaths[0])
+      if (nextRoot === managedRoot) return composeState()
+      if ([...processManager.entries.values()].some(entry => ['running', 'stopping'].includes(entry.runtime.status))) throw new Error('请先停止运行中的项目，再切换工作区')
+      if (!(await stat(nextRoot)).isDirectory()) throw new Error('请选择有效的目录')
+      const nextCache = await scanProjects(nextRoot, store.getExpandedPaths())
+      await store.initializeProjects(nextCache)
+      await store.setManagedRoot(nextRoot)
+      managedRoot = nextRoot
+      projectCache = nextCache
+      return composeState()
+    } finally { choosingRoot = false }
+  })
   ipcMain.handle('hub:model-settings', () => modelApi.getSettings())
   ipcMain.handle('hub:save-model-settings', (_event, input) => modelApi.save(input))
   ipcMain.handle('hub:complete-branch', (_event, input) => modelApi.complete(input))
@@ -173,12 +194,14 @@ function registerIpc() {
     return composeState()
   })
   ipcMain.handle('hub:start-project', async (_event, projectPath, command) => {
+    if (choosingRoot) throw new Error('正在切换工作区，请稍候再启动项目')
     const project = await findProject(projectPath)
     const preferences = store.getProject(project.path)
     const itemType = preferences.itemType ?? (preferences.command ? 'app' : project.itemType)
     if (itemType !== 'app') throw new Error('只有应用类型可以启动，请先修改条目类型并保存')
     if (preferences.visibility !== 'active') throw new Error('请先恢复到日常视图，再启动应用')
     await store.updateProject(project.path, { command: String(command ?? '').trim() })
+    if (choosingRoot) throw new Error('正在切换工作区，请稍候再启动项目')
     processManager.start(project.path, command, project.path)
     return composeState()
   })
@@ -253,6 +276,7 @@ if (ownsInstance) app.whenReady().then(async () => {
   try {
     store = new SettingsStore(path.join(app.getPath('userData'), 'settings.json'))
     await store.init()
+    managedRoot = path.resolve(process.env.PROJECT_HUB_ROOT || store.getManagedRoot() || managedRoot)
     knowledgeStore = new KnowledgeStore(path.join(app.getPath('userData'), 'knowledge.json'))
     await knowledgeStore.init()
     modelApi = new ModelApi(path.join(app.getPath('userData'), 'model-api.json'), safeStorage)

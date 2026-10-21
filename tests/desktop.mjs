@@ -9,6 +9,9 @@ const output = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../te
 await mkdir(output, { recursive: true })
 const fixture = await mkdtemp(path.join(output, 'desktop-'))
 const root = path.join(fixture, 'projects')
+const alternateRoot = path.join(fixture, 'alternative-root')
+await mkdir(path.join(alternateRoot, 'other-project'), { recursive: true })
+let chosenRoot = null
 const organizationMode = process.argv.includes('--organization')
 const knowledgeMode = process.argv.includes('--knowledge')
 let openedKnowledgeUrl = null
@@ -31,11 +34,13 @@ await writeFile(path.join(root, 'beta-python/main.py'), '# test')
 await writeFile(path.join(root, 'beta-python/README.md'), '# Test\nPython description')
 }
 const referenceFile = path.join(root, organizationMode ? 'job' : 'alpha-web', 'reference.txt')
+dialog.showOpenDialog = async (_window, options) => options.title === '选择项目工作区'
+  ? { canceled: !chosenRoot, filePaths: chosenRoot ? [chosenRoot] : [] }
+  : { canceled: false, filePaths: [referenceFile] }
 if (knowledgeMode) {
   await writeFile(referenceFile, 'Original reference file')
   shell.openExternal = async url => { openedKnowledgeUrl = url }
   shell.showItemInFolder = file => { revealedKnowledgeFile = file }
-  dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [referenceFile] })
   dialog.showMessageBoxSync = () => { closeKnowledgePromptCount++; return 0 }
 }
 process.env.PROJECT_HUB_ROOT = root
@@ -56,6 +61,7 @@ async function waitFor(code) {
   throw new Error('Timeout: ' + code)
 }
 async function click(selector) {
+  if (['.nav-archived','.nav-hidden'].includes(selector) && !await js(`!!${dom(selector)}`)) await click('.more-views')
   assert.ok(await js(`!!${dom(selector)}`), 'Missing control: ' + selector)
   await js(`${dom(selector)}.click()`)
   await sleep(100)
@@ -109,20 +115,23 @@ async function run() {
     await check('收藏切换、收藏数量与收藏筛选', async () => {
       await click('.project-card .favorite-button')
       await waitFor(`document.querySelector('.project-card .favorite-button').textContent === '已收藏'`)
-      await click('.sidebar-nav button:nth-child(2)')
+      await click('.nav-favorite')
       assert.deepEqual(await cardNames(), ['alpha-web'])
       await button('取消收藏')
       await waitFor(`document.querySelectorAll('.project-card').length === 0`)
-      await click('.sidebar-nav button:first-child')
+      await click('.nav-all')
     })
     await check('新建分组与重复名称错误提示', async () => {
+      await click('.group-create-toggle')
       await set('.new-group-form input', '测试分组')
       await click('.new-group-form button')
-      await waitFor(`document.querySelectorAll('.group-list button').length === 1`)
+      await waitFor(`document.querySelectorAll('.group-select').length === 1`)
+      await click('.group-create-toggle')
       await set('.new-group-form input', '测试分组')
       await click('.new-group-form button')
       await waitFor(`document.querySelector('.toast')?.textContent.includes('同名')`)
       await set('.new-group-form input', '')
+      await click('.group-create-toggle')
     })
     await check('保存分组、中文标签去重、备注及命令', async () => {
       const s = await state()
@@ -146,8 +155,9 @@ async function run() {
       })
     }
     await check('分组筛选、重命名与取消', async () => {
-      await click('.group-list button')
+      await click('.group-select')
       assert.deepEqual(await cardNames(), ['alpha-web'])
+      await click('.group-menu-toggle')
       await button('重命名')
       await button('取消', `document.querySelector('.group-actions')`)
       await button('重命名')
@@ -157,13 +167,14 @@ async function run() {
     })
     await check('删除分组取消确认保留数据', async () => {
       await js('void (window.confirm = () => false)')
+      await click('.group-menu-toggle')
       await button('删除分组')
       assert.equal((await state()).groups.length, 1)
     })
     await check('删除分组保留项目配置，再次保存不恢复已删除分组', async () => {
       await js('void (window.confirm = () => true)')
       await button('删除分组')
-      await waitFor(`document.querySelectorAll('.group-list button').length === 0`)
+      await waitFor(`document.querySelectorAll('.group-select').length === 0`)
       assert.equal((await state()).projects[0].groupId, null)
       await click('.save-button')
       await sleep(100)
@@ -205,8 +216,14 @@ async function run() {
       await waitFor(`document.querySelector('.log-viewer').textContent.includes('服务就绪')`)
       await waitFor(`document.querySelector('.log-viewer').textContent.includes('测试错误输出')`)
       assert.ok((await state()).projects[0].runtime.pid)
-      await click('.sidebar-nav button:nth-child(3)')
+      await click('.nav-running')
       assert.deepEqual(await cardNames(), ['alpha-web'])
+      assert.ok(await js(`!!document.querySelector('.running-dot')`))
+      chosenRoot = alternateRoot
+      const message = await js(`window.projectHub.chooseRoot().then(()=>'',error=>error.message)`)
+      assert.match(message, /停止运行/)
+      assert.equal((await state()).root, root)
+      chosenRoot = null
     })
     await check('卡片停止进程、运行数量归零、清空日志', async () => {
       await click('.project-card .stop-button')
@@ -214,7 +231,7 @@ async function run() {
       assert.equal((await cardNames()).length, 0)
       await button('清空', `document.querySelector('.log-section')`)
       await waitFor(`!!document.querySelector('.log-empty')`)
-      await click('.sidebar-nav button:first-child')
+      await click('.nav-all')
     })
     await check('卡片重新启动、详情停止', async () => {
       await click('.project-card:first-child .primary-button')
@@ -237,6 +254,46 @@ async function run() {
       await button('刷新项目')
       await waitFor(`document.querySelectorAll('.project-card').length === 3`)
     })
+    await check('27 个项目时卡片不压缩，宽窄窗口和侧栏收起均可滚动到完整操作区', async () => {
+      const names = Array.from({length:24}, (_,i) => `layout-${String(i).padStart(2,'0')}${i === 23 ? '-very-long-project-name-for-layout' : ''}`)
+      try {
+        for (const name of names) await mkdir(path.join(root,name))
+        await writeFile(path.join(root,names[0],'package.json'),JSON.stringify({description:'用于检查项目较多时的卡片布局，简介换行后仍应保留完整的标签与操作按钮。'.repeat(3)}))
+        await button('刷新项目')
+        await waitFor(`document.querySelectorAll('.project-card').length===27`)
+        await js(`window.projectHub.updateProject(${JSON.stringify(path.join(root,names[0]))},{tags:${JSON.stringify(Array.from({length:8},(_,i)=>`较长的测试标签内容${i}`))}})`)
+        await button('刷新项目')
+        await waitFor(`document.querySelectorAll('.project-card').length===27`)
+        window.show()
+        for (const width of [1480,1120]) {
+          window.setSize(width,width===1120?720:920)
+          for (const collapsed of [false,true]) {
+            if (await js(`document.querySelector('.sidebar').classList.contains('is-collapsed')`) !== collapsed) await click('.sidebar-toggle')
+            await js(`document.querySelector('.project-grid').scrollTop=0`)
+            await sleep(600)
+            const metrics=await js(`(()=>{const grid=document.querySelector('.project-grid');return{minHeight:Math.min(...[...grid.querySelectorAll('.project-card')].map(card=>card.getBoundingClientRect().height)),clipped:[...grid.querySelectorAll('.project-card')].filter(card=>card.querySelector('.project-card-actions').getBoundingClientRect().bottom>card.getBoundingClientRect().bottom+1).map(card=>card.querySelector('h3').textContent),scroll:grid.scrollHeight>grid.clientHeight,horizontal:document.documentElement.scrollWidth>innerWidth}})()`)
+            assert.ok(metrics.minHeight>=240,JSON.stringify({width,collapsed,...metrics}))
+            assert.equal(metrics.scroll,true)
+            assert.equal(metrics.horizontal,false)
+            assert.deepEqual(metrics.clipped,[], 'Long descriptions and wrapped tags must not clip actions')
+            await js(`document.querySelector('.project-card:last-child').scrollIntoView({block:'end'})`)
+            await sleep(150)
+            assert.ok(await js(`(()=>{const card=document.querySelector('.project-card:last-child'), r=card.getBoundingClientRect(),a=card.querySelector('.project-card-actions').getBoundingClientRect(),g=document.querySelector('.project-grid').getBoundingClientRect();return a.top>=r.top&&a.bottom<=r.bottom&&a.bottom<=g.bottom&&a.top>=g.top})()`),'Last card action area must be visible and inside the card')
+            if(!collapsed){
+              await js(`document.querySelector('.project-grid').scrollTop=0`)
+              await sleep(150)
+              await writeFile(path.join(output,`projects-27-${width}.png`),(await window.webContents.capturePage(undefined,{stayAwake:true})).toPNG())
+            }
+          }
+        }
+      } finally {
+        if(await js(`document.querySelector('.sidebar').classList.contains('is-collapsed')`))await click('.sidebar-toggle')
+        window.setSize(1480,920)
+        for(const name of names)await rm(path.join(root,name),{recursive:true,force:true})
+        await button('刷新项目')
+        await waitFor(`document.querySelectorAll('.project-card').length===3`)
+      }
+    })
     await check('IPC 拒绝根目录和项目目录外的操作', async () => {
       for (const method of ['updateProject', 'startProject', 'stopProject', 'clearLogs', 'calculateSize', 'openFolder']) {
         const message = await js(`window.projectHub.${method}(${JSON.stringify(root)},{}).then(()=>'',error=>error.message)`)
@@ -257,6 +314,61 @@ async function run() {
       assert.ok(await js('document.documentElement.scrollWidth <= window.innerWidth'))
       await writeFile(path.join(output, 'desktop-minimum.png'), (await window.webContents.capturePage()).toPNG())
       window.setSize(1480, 920)
+    })
+    await check('侧边栏层级、按需创建、更多视图、收起导航和偏好持久化', async () => {
+      assert.equal(await js(`document.querySelectorAll('nav[aria-label="工作台"] > button').length`), 2)
+      assert.equal(await js(`!!document.querySelector('.new-group-form')`), false)
+      assert.equal(await js(`document.querySelector('.sidebar-footer .settings-nav').getAttribute('aria-label')`), '设置')
+      await click('.more-views')
+      assert.equal(await js(`!!document.querySelector('.nav-archived')`), true)
+      await click('.more-views')
+      assert.equal(await js(`!!document.querySelector('.nav-archived')`), false)
+      await click('.sidebar-toggle')
+      assert.ok(await js(`document.querySelector('.sidebar').clientWidth <= 64`))
+      await click('.knowledge-nav')
+      assert.ok(await js(`!!document.querySelector('.knowledge-square')`))
+      await click('.settings-nav')
+      assert.ok(await js(`!!document.querySelector('.model-settings')`))
+      await click('.nav-all')
+      window.reload()
+      await new Promise(resolve => window.webContents.once('did-finish-load', resolve))
+      await waitFor(`!!document.querySelector('.sidebar.is-collapsed')`)
+      window.setSize(1120,720)
+      await sleep(200)
+      assert.ok(await js(`document.documentElement.scrollWidth <= innerWidth`))
+      await writeFile(path.join(output,'sidebar-collapsed.png'), (await window.webContents.capturePage()).toPNG())
+      await click('.sidebar-toggle')
+      window.setSize(1480,920)
+      await sleep(200)
+    })
+    await check('工作区目录查看、取消、切换、持久化与原配置保留', async () => {
+      const before = await state()
+      await click('.workspace-trigger')
+      assert.equal(await js(`document.querySelector('.workspace-popover code').textContent`), root)
+      await button('切换目录…')
+      assert.equal((await state()).root,root)
+      const invalidRoot = path.join(fixture, 'not-a-directory.txt')
+      await writeFile(invalidRoot, 'not a directory')
+      chosenRoot = invalidRoot
+      const invalidMessage = await js(`window.projectHub.chooseRoot().then(()=>'',error=>error.message)`)
+      assert.match(invalidMessage, /有效的目录/)
+      assert.equal((await state()).root,root)
+      chosenRoot = alternateRoot
+      await click('.workspace-trigger')
+      await button('切换目录…')
+      await waitFor(`document.querySelector('.workspace-trigger strong').textContent==='alternative-root'`)
+      assert.deepEqual(await cardNames(), ['other-project'])
+      const {SettingsStore}=await import('../electron/settings-store.mjs')
+      const reopened=new SettingsStore(path.join(fixture,'user-data/settings.json'))
+      await reopened.init()
+      assert.equal(reopened.getManagedRoot(),alternateRoot)
+      chosenRoot=root
+      await click('.workspace-trigger')
+      await button('切换目录…')
+      await waitFor(`document.querySelectorAll('.project-card').length===3`)
+      const after=await state()
+      assert.deepEqual(after.projects.map(p=>[p.path,p.notes,p.tags,p.favorite,p.command]),before.projects.map(p=>[p.path,p.notes,p.tags,p.favorite,p.command]))
+      chosenRoot=null
     })
     await check('渲染器无错误、隔离与沙箱开启', async () => {
       assert.deepEqual(errors, [])
@@ -383,24 +495,24 @@ async function runOrganization() {
       await button('收藏项目')
       await button('归档')
       assert.ok(!(await cardNames()).includes('DDos2026'))
-      assert.equal(await js(`document.querySelector('.sidebar-nav button:nth-child(2) b').textContent`), '0')
-      await click('.sidebar-nav button:nth-child(4)')
+      assert.equal(await js(`document.querySelector('.nav-favorite b') === null`), true)
+      await click('.nav-archived')
       assert.deepEqual((await cardNames()).sort(), ['DDos2026','ds_harness'].sort())
       await selectProject('DDos2026')
       assert.equal((await preferences('DDos2026')).favorite, true)
       await button('恢复到日常视图')
       assert.equal((await preferences('DDos2026')).visibility, 'active')
-      await click('.sidebar-nav button:first-child')
+      await click('.nav-all')
       assert.ok((await cardNames()).includes('DDos2026'))
     })
     await check('隐藏、隐藏视图与恢复', async () => {
       await selectProject('job')
       await button('隐藏')
       assert.ok(!(await cardNames()).includes('job'))
-      await click('.sidebar-nav button:nth-child(5)')
+      await click('.nav-hidden')
       assert.deepEqual(await cardNames(), ['job'])
       await button('恢复到日常视图')
-      await click('.sidebar-nav button:first-child')
+      await click('.nav-all')
       assert.equal((await preferences('job')).visibility, 'active')
     })
     await check('子项目切换为应用并保存独立命令、标签和备注', async () => {
@@ -443,10 +555,10 @@ async function runOrganization() {
     await check('归档父目录暂时收起子项目，恢复后配置仍保留', async () => {
       await button('归档')
       await waitFor(`document.querySelectorAll('.project-card').length === 3`)
-      await click('.sidebar-nav button:nth-child(4)')
+      await click('.nav-archived')
       await selectProject('github')
       await button('恢复到日常视图')
-      await click('.sidebar-nav button:first-child')
+      await click('.nav-all')
       await waitFor(`document.querySelectorAll('.project-card').length === 6`)
       assert.equal((await preferences('github/repo-a')).notes, '子项目用途说明')
     })
@@ -456,13 +568,13 @@ async function runOrganization() {
       assert.ok((await cardNames()).includes('github'))
       assert.ok((await cardNames()).includes('repo-a'))
       assert.ok(!(await cardNames()).includes('repo-b'))
-      await click('.sidebar-nav button:nth-child(5)')
+      await click('.nav-hidden')
       await selectProject('repo-b')
       await button('恢复到日常视图')
-      await click('.sidebar-nav button:first-child')
+      await click('.nav-all')
     })
     await check('恢复旧工具后刷新与重新加载不会重新归档', async () => {
-      await click('.sidebar-nav button:nth-child(4)')
+      await click('.nav-archived')
       await selectProject('ds_harness')
       await button('恢复到日常视图')
       await button('刷新项目')
@@ -481,12 +593,13 @@ async function runOrganization() {
     })
     await check('分类界面最小窗口布局与渲染器检查', async () => {
       await selectProject('DDos2026')
+      window.show()
       window.setSize(1120,720)
       await sleep(300)
       assert.ok(await js('document.documentElement.scrollWidth <= window.innerWidth'))
       assert.ok(await js(`document.querySelector('.toolbar').scrollWidth <= document.querySelector('.toolbar').clientWidth`))
       assert.deepEqual(errors, [])
-      await writeFile(path.join(output,'organization-minimum.png'),(await window.webContents.capturePage()).toPNG())
+      await writeFile(path.join(output,'organization-minimum.png'),(await window.webContents.capturePage(undefined,{stayAwake:true})).toPNG())
       window.setSize(1480,920)
       await sleep(200)
       await writeFile(path.join(output,'organization.png'),(await window.webContents.capturePage()).toPNG())
@@ -642,7 +755,7 @@ async function runKnowledge() {
       await click('.knowledge-edit')
       await set('.knowledge-content-input','不能悄悄丢掉的草稿')
       await js('void(window.confirm=()=>false)')
-      await click('.sidebar-nav button:first-child')
+      await click('.nav-all')
       assert.ok(await js(`!!document.querySelector('.knowledge-form')`))
       await selectKnowledge('参考论文网页')
       assert.equal(await js(`document.querySelector('.knowledge-content-input').value`),'不能悄悄丢掉的草稿')
@@ -734,6 +847,11 @@ async function runKnowledge() {
         await click('.paragraph-actions button')
         await set('.branch-title-input','请解释注意力')
         await set('.branch-kind-input','idea')
+        await click('.workspace-trigger')
+        await button('切换目录…')
+        assert.ok(await js(`document.querySelector('.toast').textContent.includes('请先保存')`))
+        assert.equal(await js(`document.querySelector('.branch-title-input').value`),'请解释注意力')
+        assert.equal((await state()).root,root)
         const before=(await state()).knowledge.find(e=>e.title==='毕设实验笔记（已整理）').branches.length
         await click('.branch-ai')
         await waitFor(`document.querySelector('.branch-content-input').value.includes('AI 测试解释')`)
@@ -847,6 +965,66 @@ async function runKnowledge() {
       await js(`document.querySelector(${JSON.stringify(section)}).scrollIntoView({block:'center'})`)
       await sleep(300)
       await writeFile(path.join(output,'suggested-questions.png'),(await window.webContents.capturePage()).toPNG())
+    })
+    await check('长正文顶部浏览分支、层级目录、自动展开、返回阅读位置与草稿保留',async()=>{
+      const content=Array.from({length:40},(_,i)=>`第${i+1}段：`+'长正文阅读位置与分支浏览测试。'.repeat(12)).join('\n\n')
+      const branches=[
+        {id:'browse-root',parentId:null,kind:'question',title:'注意力如何工作？',quote:'第1段：',content:'父分支原理说明。\n'.repeat(35)},
+        {id:'browse-child',parentId:'browse-root',kind:'explanation',title:'缩放为什么有效？',quote:'父分支原理说明。',content:'子分支的机制解释。\n'.repeat(20)},
+        {id:'browse-other',parentId:null,kind:'idea',title:'怎样设计对照实验？',quote:'第20段：',content:'另一条思路的实验步骤。\n'.repeat(35)},
+      ]
+      const saved=await js(`window.projectHub.saveKnowledge(${JSON.stringify({title:'分支阅读定位测试',kind:'note',category:'测试',content,branches,tags:[]})})`)
+      try {
+        window.reload()
+        await new Promise(resolve=>window.webContents.once('did-finish-load',resolve))
+        await waitFor(`!!document.querySelector('.knowledge-nav')`)
+        await click('.knowledge-nav')
+        await selectKnowledge('分支阅读定位测试')
+        assert.equal(await js(`document.querySelectorAll('.branch-jump-select option').length`),4)
+        assert.ok(await js(`document.querySelector('.branch-jump-select option[value="browse-child"]').textContent.includes('↳')`))
+        await js(`document.querySelector('.knowledge-reading').scrollTop=700`)
+        await click('.branch-browse')
+        assert.ok(await js(`document.querySelector('.knowledge-reading').scrollTop>2000`))
+        const pinnedOffset=await js(`document.querySelector('.branch-navigation').getBoundingClientRect().top-document.querySelector('.knowledge-reading').getBoundingClientRect().top`)
+        assert.ok(pinnedOffset>=0&&pinnedOffset<=32, `Pinned navigation offset: ${pinnedOffset}`)
+        await click('.branch-read-body')
+        assert.ok(await js(`Math.abs(document.querySelector('.knowledge-reading').scrollTop-700)<2`))
+        await js(`document.querySelectorAll('.knowledge-branch').forEach(branch=>branch.open=false)`)
+        await set('.branch-jump-select','browse-child')
+        assert.ok(await js(`document.getElementById('branch-browse-root').open&&document.getElementById('branch-browse-child').open`))
+        assert.ok(await js(`document.getElementById('branch-browse-child').classList.contains('branch-focused')`))
+        assert.ok(await js(`document.getElementById('branch-browse-child').getBoundingClientRect().top>=document.querySelector('.branch-navigation').getBoundingClientRect().bottom`))
+        await click('#branch-browse-child .branch-back')
+        assert.equal(await js(`document.querySelector('.branch-jump-select').value`),'browse-root')
+        await set('.branch-jump-select','browse-other')
+        await click('#branch-browse-other .branch-back')
+        assert.ok(await js(`(()=>{const p=document.getElementById('knowledge-paragraph-19').getBoundingClientRect(),r=document.querySelector('.knowledge-reading').getBoundingClientRect();return p.top>=r.top&&p.top<r.bottom})()`))
+        await click('.paragraph-actions button')
+        await set('.branch-title-input','尚未保存的阅读想法')
+        await set('.branch-jump-select','browse-child')
+        await click('.branch-read-body')
+        assert.equal(await js(`document.querySelector('.branch-title-input').value`),'尚未保存的阅读想法')
+        await js(`void(window.confirm=()=>true)`)
+        await click('.branch-form .branch-actions button:last-child')
+        window.setSize(1120,720)
+        await set('.branch-jump-select','browse-child')
+        await sleep(300)
+        assert.ok(await js(`document.documentElement.scrollWidth<=innerWidth&&document.querySelector('.branch-navigation').scrollWidth<=document.querySelector('.branch-navigation').clientWidth`))
+        await writeFile(path.join(output,'branch-navigation-minimum.png'),(await window.webContents.capturePage(undefined,{stayAwake:true})).toPNG())
+        window.setSize(1480,920)
+        await set('.branch-jump-select','browse-other')
+        await sleep(300)
+        await writeFile(path.join(output,'branch-navigation.png'),(await window.webContents.capturePage(undefined,{stayAwake:true})).toPNG())
+        const current=(await state()).knowledge.find(entry=>entry.id===saved.id)
+        assert.deepEqual(current.branches,branches)
+      } finally {
+        window.setSize(1480,920)
+        await js(`window.projectHub.deleteKnowledge(${JSON.stringify(saved.id)})`)
+        window.reload()
+        await new Promise(resolve=>window.webContents.once('did-finish-load',resolve))
+        await waitFor(`!!document.querySelector('.knowledge-nav')`)
+        await click('.knowledge-nav')
+      }
     })
     await check('最小窗口布局、文本安全和无渲染器错误',async()=>{
       await selectKnowledge('毕设实验笔记（已整理）')

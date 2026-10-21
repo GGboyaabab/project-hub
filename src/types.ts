@@ -111,6 +111,7 @@ export interface ProjectHubApi {
   completeBranch: (input: { title: string; quote: string; question: string; content: string; kind?: KnowledgeBranch['kind'] }) => Promise<string>
   getState: () => Promise<HubState>
   refresh: () => Promise<HubState>
+  chooseRoot: () => Promise<HubState | null>
   saveKnowledge: (input: KnowledgeDraft) => Promise<{ state: HubState; id: string }>
   deleteKnowledge: (id: string) => Promise<HubState>
   chooseKnowledgeFile: () => Promise<string | null>

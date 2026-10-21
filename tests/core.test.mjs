@@ -253,6 +253,24 @@ test('settings: simultaneous writes remain valid JSON and preserve changes', asy
   assert.equal(saved.projects['project-39'].notes.length, 390)
 })
 
+test('settings: workspace path persists without losing project preferences; failed writes roll back', async (t) => {
+  const file = path.join(await fixture(t), 'settings.json')
+  const store = new SettingsStore(file)
+  await store.init()
+  assert.equal(store.getManagedRoot(), null)
+  await assert.rejects(store.setManagedRoot('relative'), /绝对路径/)
+  await store.updateProject('example', { notes: '保留原项目资料' })
+  const root = path.resolve('example-workspace')
+  await store.setManagedRoot(root)
+  const reopened = new SettingsStore(file)
+  await reopened.init()
+  assert.equal(reopened.getManagedRoot(), root)
+  assert.equal(reopened.getProject('example').notes, '保留原项目资料')
+  store.persist = async () => { throw Error('write failed') }
+  await assert.rejects(store.setManagedRoot(path.resolve('other-workspace')), /write failed/)
+  assert.equal(store.getManagedRoot(), root)
+})
+
 test('process: successful command captures stdout, stderr, exit code and working directory', async (t) => {
   const root = await fixture(t)
   await writeFile(path.join(root, 'run.cjs'), 'console.log("stdout marker", process.cwd()); console.error("stderr marker")')
